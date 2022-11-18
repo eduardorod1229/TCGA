@@ -1,0 +1,251 @@
+---
+title: "Normalization with housekeeping genes"
+output: 
+  html_document:
+    code_folding: hide
+    toc: false
+    dev: 'svg'
+---
+```{r setup, warning=FALSE, echo=FALSE}
+library(kableExtra)
+library(DT)
+library(data.table)
+```
+
+## Data Set up {.tabset}
+
+### Load the data
+
+```{r}
+setwd("K:/Documents/TCGA")
+# Read in Covariates
+covs <-  read.csv("K:/Documents/TCGA/TCGA.Glioma.metadata.tsv", header = TRUE, sep = "\t")
+
+# Read in the transposome dataset 
+transp <-  read.csv("K:/Documents/TCGA/count_matrix2.csv.gz" , header = TRUE)
+
+
+```
+### Merge the raw data. 
+
+```{r}
+split_tcga_name = function(subject_name){
+  sp =strsplit(subject_name,split = "-")[[1]]
+  case_id = paste("TCGA-",sp[1], "-", sp[2], sep = "")
+  tumor_code = paste(strsplit(sp[3], split="")[[1]][-3], collapse= "")
+  is_tumor_sample = ifelse(as.integer(tumor_code)<10, 1, 0)
+  return(c(case_id, is_tumor_sample))
+} 
+
+
+transp[, c("case_submitter_id_2","is_tumor")] = t(sapply(transp$subject, split_tcga_name))
+
+covs_backup <-  covs
+transp_backup <- transp
+
+
+
+covs<- covs_backup
+transp <-  transp_backup
+tumor <-  1 # 1 to look at tumor, 0 to look at blood samples
+transp$is_tumor <- as.numeric(transp$is_tumor)
+transp <-  transp[which(transp$is_tumor==tumor), ]
+
+datatable(transp[,1:15],options <-  list(pageLength = 20))
+head(transp)
+```
+### Importing housekeeping genes
+```{r}
+hk_genes <-  read.csv("K:/Documents/TCGA/Data/featureCounts.ncbiRefSeq.transcript.csv", header <-  TRUE, skip = 1, sep = '\t')
+
+
+
+column_names <- function(data_frame){
+
+
+change_names <-  colnames(data_frame)[-c(1,2,3,4,5,6)]
+
+
+names(data_frame)[colnames(data_frame) %in% change_names] <-
+        sapply(strsplit(change_names, "\\."), function(x)
+                 paste0(x[c(6,12,13)], collapse = "."))
+
+colnames(data_frame) <-gsub("\\.", "-",colnames(data_frame))
+}
+
+
+colnames(hk_genes) <- column_names(hk_genes)
+
+
+hk_genes %>%
+        saveRDS('K:/Documents/TCGA/Data/house_keeping_genes.rds')
+
+
+#hk_genes <- t(hk_genes)
+#hk_genes <- data.frame(hk_genes)
+
+
+
+
+
+```
+### Normalizing
+
+```{r}
+for(h in list("HERVK113.","SVA_A.","SVA_B.","SVA_C.","SVA_D.","SVA_E.","SVA_F.")){
+  #Following Jake's code FIrst divide all the Q20 by raw pair counts
+  norm <-  transp[paste(h,"paired.human.Q20.aligned", sep='')]/transp['raw.pair.count']
+  transp[,ncol(transp)+1] <- norm
+  colnames(transp)[ncol(transp)] <- paste("normalized",h,'paired.human.Q20.aligned', sep='.')
+  
+  #Then Divide all rs by raw pair counts
+  for(s in list('','r10.','r100.','r1000.','r10000.')){
+    r_norm <- transp[paste(s,"uniq.",h,'paired.human.Q20.aligned', sep='')]/transp['raw.pair.count']
+    transp[,ncol(transp)+1] <- r_norm
+    colnames(transp)[ncol(transp)] <- paste('normalized',s,'uniq',h,'paired.human.Q20.aligned', sep='.')
+  }
+}
+datatable(transp[,1:15],options = list(pageLength = 20))
+```
+
+
+
+### Merging with metadata
+
+*From Geno's script*\  
+\  
+
+#### Step 1: filter metadata to only include those in the transp file
+
+```{r}
+nrow(covs)
+covs = covs[which(covs$case_submitter_id %in% transp$case_submitter_id_2), ]
+nrow(covs)
+```
+#### Step 2: filter transp to only include those in the covs/metadata file
+
+```{r}
+nrow(transp)
+transp <-  transp[which(transp$case_submitter_id_2 %in% covs$case_submitter_id),]
+nrow(transp)
+```
+
+
+#### Step 3: match the order of the files\  
+\  
+
+**In This section `surv_variables` are only the normalized variables run the code from above to see the original dataset**
+```{r}
+col_order=match(as.character(covs$case_submitter_id), as.character(transp$case_submitter_id_2))
+covs[,"is_tumor"] = transp[col_order, which(colnames(transp)=="is_tumor")]
+
+
+surv_variables <- colnames(transp)[c(311:ncol(transp))]
+surv_variables <- append(surv_variables, colnames(transp)[2],2)
+head(surv_variables,20)
+length(surv_variables)
+
+```
+```{r}
+for(i in c(1:length(surv_variables))){
+  covs[, surv_variables[i]] = transp[col_order, which(colnames(transp)==surv_variables[i])]
+}
+```
+#### This should show the metadata file with the "is_tumor" and transp variables as the final columns. 
+```{r}
+#covs$raw_count <- transp$raw.pair.count
+datatable(covs,options = list(pageLength = 20))
+```
+
+
+
+
+
+## Regression models {.tabset}
+### Box Plots
+
+
+```{r fig2, fig.height = 6, fig.width = 10, warning=FALSE, message=FALSE}
+require(broom)
+library(data.table)
+library(ggplot2)
+summary_models <- data.table()
+for(col in names(c(covs[21:ncol(covs)]))){
+
+  lmodel <- lm(covs[[col]] ~ as.factor(primary_diagnosis)+ Age + gender, data = covs)
+  out <- tidy(lmodel)
+  out['Variable'] <- col
+  #summary_models <- rbind(summary_models, out)
+  summary_models <- rbind(summary_models, out)
+  
+  p<-ggplot(covs, aes(x=primary_diagnosis, y=.data[[col]], color=primary_diagnosis)) +
+     geom_boxplot()+
+     geom_jitter(shape=16, position=position_jitter(0.2))+
+    theme(axis.text.x = element_text(angle=15),legend.position="none")+
+    labs(title=col,x="Primary Diagnosis", y = "Normalized # of hits")
+    
+  print(p)
+  
+  #fig <- plot(as.factor(covs$primary_diagnosis), covs[[col]], col='red', main='Summary of Regression Model', xlab='Primary Diagnosis', ylab=col)
+
+#Add fitted line
+   #abline(lmodel)
+   #print(fig)
+   #dev.off()
+}
+```
+```{css,echo=FALSE}
+button.btn.collapsed:before
+{
+    content:'+' ;
+    display:block;
+    width:15px;
+}
+button.btn:before
+{
+    content:'-' ;
+    display:block;
+    width:15px;
+}
+```
+
+
+```{r,echo=FALSE,results='hide'}
+knitr::knit_hooks$set(drop1=function(before, options, envir) {
+    if (before) {
+        paste(
+            '<p>',
+'<button class="btn btn-primary collapsed" data-toggle="collapse" data-target="#ce1">',
+'</button>',
+'</p>',
+'<div class="collapse" id="ce1">',
+'<div class="card card-body">',  sep = "\n")
+    } else {
+        paste("</div>", "</div>", sep = "\n")
+    }
+})
+```
+### Regression models summary
+```{r drop1=TRUE,results="markup"}
+
+datatable(summary_models,options = list(pageLength = 24))
+```
+### Scatter plots
+
+```{r fig1, fig.height = 6, fig.width = 10, warning=FALSE, message=FALSE}
+library(ggplot2)
+for(col in names(c(covs[21:ncol(covs)]))){
+
+  splot <- ggplot(covs,aes(as.factor(primary_diagnosis), .data[[col]])) +
+     labs(y=col, x='Primary Diagnosis')+
+     geom_point(color = 'navy') +
+     #geom_smooth(method=lm, se=TRUE)+
+     theme_light()+
+     theme(axis.text.x = element_text(angle=15))
+  show(splot)
+  #dev.off()
+}
+```
+
+
+
