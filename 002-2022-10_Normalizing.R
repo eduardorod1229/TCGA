@@ -1,10 +1,10 @@
 
-system("cmd.exe", input = paste('"K:\\Software\\R-4.1.2\\bin\\Rscript.exe" K:\\Documents\\TCGA\\Scripts\\001-2022-10_REdata.R'))
+system("cmd.exe", input = paste('"K.R'))
 library(DT)
 library(data.table)
-transp <- readRDS("K:/Documents/TCGA/Data/transp.rds")
-hk_subt_count <- readRDS("K:/Documents/TCGA/Data/hk_subtranscripts_count.rds")
-hk_exomes_count <- readRDS("K:/Documents/TCGA/Data/hk_exomes_count.rds")
+transp <- readRDS("K.rds")
+hk_subt_count <- readRDS("K.rds")
+hk_exomes_count <- readRDS("K.rds")
 
 
 #There are only 125 subjects in the housekeeping genes and 312 in the transposome dataframe
@@ -61,6 +61,6 @@ normalize_count <- function(df){
 
 normal_df <- normalize_count(re_count_df)
 
-saveRDS(normal_df,'K:/Documents/TCGA/Data/normalized_re.rds')
+saveRDS(normal_df,'K.rds')
 
-save.image('K:/Documents/TCGA/Scripts/RE_normalized_image.rds')
+save.image('K.rds')
