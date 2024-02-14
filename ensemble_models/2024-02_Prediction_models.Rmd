@@ -1,0 +1,461 @@
+---
+title: 'Super Learner in REs'
+subtitle: RE project
+output:
+  html_document:
+    df_print: paged
+    number_sections: false
+    toc: yes
+    toc_depth: '3'
+    toc_float: yes
+    code_folding: hide
+    theme: cosmo
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(glmnet)
+library(survival)
+
+
+source("config.R")
+
+
+```
+
+# Data Exploration {.tabset}
+
+## Dimension reduction
+
+```{r}
+load(paste0(data_path, ('Train_datasets/gbm_train.RData')))
+load(paste0(data_path, ('Normal_dfs/gbm_re_coefs.RData')))
+load(paste0(data_path, ('Test_datasets/gbm_test.RData')))
+
+retroelements  <- c(gbm_re_coefs$re)
+all_res <- c(names(train_set)[2:3360])
+
+gbm_re_coefs <- gbm_re_coefs[order(gbm_re_coefs$'p_value'), ]
+gbm_re_coefs$rank <- order(gbm_re_coefs$p_value)
+gbm_re_coefs$p_adjusted <- p.adjust(gbm_re_coefs$p_value, method = 'fdr', n=1319)
+gbm_re_coefs$p_adjusted_manual <- gbm_re_coefs$p_value*(1319/(1319 - (gbm_re_coefs$rank)+1))
+
+
+cox_res <- c(gbm_re_coefs$re)
+adjusted_res <- gbm_re_coefs$re[gbm_re_coefs$p_adjusted < 0.06]
+
+```
+
+```{r }
+cor_df = test_set[,retroelements, drop=FALSE]
+cor_matrix = cor(cor_df)
+```
+
+```{r}
+library(plotly)
+
+row_names <- rownames(cor_matrix)
+col_names <- colnames(cor_matrix)
+
+heatmap_plot <- plot_ly(x = row_names, y = col_names,z = cor_matrix,
+                        colorscale = "Viridis",
+                        type = "heatmap", 
+                        width = 800, height = 800) 
+
+
+heatmap_plot
+
+```
+
+```{r}
+highly_correlated <- (which(abs(cor_matrix) >= 0.8 & abs(cor_matrix) < 1, arr.ind = TRUE))
+row_names <- rownames(cor_matrix)[highly_correlated[, 1]]
+col_names <- colnames(cor_matrix)[highly_correlated[, 2]]
+highly_correlated <- data.frame(row = row_names, 
+                                colum=col_names,
+                                corr_coef = cor_matrix[highly_correlated])
+highly_correlated
+```
+
+Subsetting the data to, keep the lowest p-value RE from the `highly_correlated` matrix.\
+In this case there are only 2 **LTR47A** with a p-value of `r gbm_re_coefs$p_value[gbm_re_coefs$re == 'LTR47A']` and **HERVFH19.int** with a p-value of `r gbm_re_coefs$p_value[gbm_re_coefs$re == 'HERVFH19.int']`.\
+However, I'll automate it in case this changes:
+
+```{r}
+excl_re <- c()
+for (i in 1:nrow(highly_correlated)) {
+  # Store values from the pairs on a vector to compare the highest p-value
+  pair_vector <- c(highly_correlated$row[i], highly_correlated$colum[i])
+  #Subset the dataframe containing the p-values 
+  max_p_df <- gbm_re_coefs[gbm_re_coefs$re %in% pair_vector,]
+  max_p_re <- max_p_df$re[which.max(max_p_df$p_value)]
+  print(max_p_df)
+  
+  #Store the name of the RE on a vector to be used later to subset the final dataset
+  excl_re[i]<- max_p_re
+}
+#Since there will be repeats keep only the unique values
+
+excl_re <- unique(excl_re)
+
+```
+
+The Retroelements to exclude are `r unique(excl_re)`
+
+The following Dataframe is the final set of REs that would make it to the Super Learner with a threshold of adjusted p-value of 0.05.
+
+```{r}
+gbm_re_coefs <- gbm_re_coefs[!gbm_re_coefs$re %in% excl_re, ]
+
+#Subsetting by p-value threshold
+
+gbm_coefs_low_p <- gbm_re_coefs[gbm_re_coefs$p_adjusted <= 0.05, (names(gbm_re_coefs) %in% c('re','repFamily','p_value','p_adjusted','p_manual'))] 
+
+low_p_res <- c(gbm_coefs_low_p$re)
+save(low_p_res, file=paste0(data_path, 'Normal_dfs/final_res.RData'))
+
+gbm_coefs_low_p
+
+```
+
+**Pre-processing training/testing sets**
+
+```{r}
+
+prepare_df <- function(df, re_list) {
+  df$Survival_months[is.na(df$Survival_months)] <-  mean(df$Survival_months, na.rm=TRUE)
+  demo_columns <- c('Age','sex')
+  status <- 'Vital_status'
+  time <-  'Survival_months'
+  res <- re_list
+  sl_columns <-  c(demo_columns, re_list, status, time)
+  sl_data = df[, sl_columns, drop=FALSE]
+  sl_data$sex <- ifelse(sl_data$sex == "female", 1, 0) 
+  colnames(sl_data)[colnames(sl_data) == 'sex'] <- 'female'
+  sl_data$Age[is.na(sl_data$Age)] = round(mean(df$Age, na.rm=TRUE))
+  sl_data$Vital_status[is.na(sl_data$Vital_status)] <-  0
+  sl_data$Survival_months[is.na(sl_data$Survival_months)] <-  mean(df$Survival_months, na.rm=TRUE)
+return(sl_data)
+}
+
+train_df <- prepare_df(train_set, adjusted_res)
+test_df <- prepare_df(test_set, adjusted_res)
+test_df$Survival_months <- round(test_df$Survival_months,0)
+train_df$Survival_months <- round(train_df$Survival_months,0)
+
+```
+
+
+# Super Learner {.tabset}
+
+In this one is just to see if we can have it running.\
+
+
+## Model
+
+```{r}
+library(doParallel)
+library(foreach)
+library(survSuperLearner)
+
+#event.SL.library <- cens.SL.library <- lapply(c("survSL.km", "survSL.coxph", "survSL.expreg", "survSL.weibreg", "survSL.loglogreg", "survSL.gam", "survSL.rfsrc"), function(alg) {
+#  c(alg, "survscreen.glmnet", "survscreen.marg", "All")
+#})
+
+#train_df <- train_df[order(train_df$Survival_months),]
+#test_df <- test_df[order(test_df$Survival_months),]
+
+
+event.SL.library <- cens.SL.library <- lapply(c("survSL.coxph","survSL.rfsrc", "survSL.expreg",  "survSL.gam","survSL.km","survSL.loglogreg","survSL.weibreg"), function(alg) {
+  c(alg, "survscreen.glmnet", "survscreen.marg", "All")
+})
+
+
+X_train <- data.frame(train_df[1:19])
+X_new <- data.frame(test_df[1:19])
+
+
+
+# Define the function to run in parallel
+sl_lasso <- 
+  suppressWarnings({
+    survSuperLearner(time = train_df$Survival_months, 
+                     event = train_df$Vital_status,
+                     X = X_train, 
+                     newX = X_new, 
+                     new.times = c(seq(1,24)), 
+                     event.SL.library = event.SL.library, 
+                     cens.SL.library = cens.SL.library,
+                     verbose = FALSE)
+  })
+
+
+
+```
+
+
+* The object `sl_lasso$event.SL.predict` contain, for each x in newX & each t in new.times, the predicted probability that the event occurs after time t: $P(event > t|x)$.   
+
+The table below contains the survival probability for each subject (rows) in the **test set** at each of the time points available (in months) in the training indices (columns)
+
+```{r}
+
+SL_predictions <- as.data.frame(sl_lasso$event.SL.predict)
+colnames(SL_predictions) <- as.character(c(seq(1,18),'24'))
+SL_predictions
+
+
+```
+
+**Defining the "Half-life" Metric for each test sample**
+
+This is the timepoint at which predicted survival drop below 50%, meaning the first time at which this person is predicted to be most likely dead.
+
+```{r}
+half_life_calculator <- function(probs, times) {
+  pos <- min(which(probs <= 0.5))  
+  if (pos > 1) {
+    # if the 0.5 probability does not occur at the first time point.
+    bpos <- pos - 1  
+    t1 <- times[bpos]
+    t2 <- times[pos]
+    p1 <- probs[bpos]
+    p2 <- probs[pos]
+    m <- (p2 - p1) / (t2 - t1)
+    b <- p1 - m * t1
+    halflife <- (0.5 - b) / m
+  } else {
+    # if the 0.5 probability DOES occur at the first time point.
+    halflife <- times[1]
+  }
+  
+  if (is.na(halflife) || is.nan(halflife)) {
+    halflife <- 12
+  }
+  return(halflife)
+}
+
+
+
+```
+
+```{r}
+cox_model <- coxph(Surv(Survival_months, Vital_status) ~ Age + female +X.TGTGCA.n + MER70B + L1ME3B+ LTR7Y + X.TGGTGG.n + MER34B + L1PA11 + MER113 + MER61D, data = train_df)
+
+predicted_time <- predict(cox_model, newdata = test_df, type = "expected")
+```
+
+```{r}
+half_lifes <- c()
+
+for (i in seq(dim(SL_predictions)[1])){
+  
+  half_lifes[i] <- half_life_calculator(sl_lasso$event.SL.predict[i,]  , 
+                                                  c(round(train_df$Survival_months,1)) )
+} 
+
+```
+
+* The object `cens.SL.predict` contains, for each x in newX & each t in new.times, the predicted probability the censoring occurs after time t: $P( censoring >t | x)$
+
+```{r}
+
+as.data.frame(sl_lasso$cens.SL.predict)
+
+```
+
+
+These are the cross-validated risks for each model in the ensemble. 
+
+```{r}
+sl_lasso$event.cvRisk
+
+```
+
+
+
+## Performance metrics {.tabset}
+
+```{r}
+pred_df <- data.frame(obs_surv_time = rep(NA, nrow(test_df)),
+                      pred_surv_time = rep(NA, nrow(test_df)),
+                      deceased = rep(NA, nrow(test_df)))
+
+# Populate the dataframe with columns
+pred_df$obs_surv_time <- test_df$Survival_months
+pred_df$pred_surv_time <- half_lifes 
+pred_df$deceased <- test_df$Vital_status
+pred_df$RMSE <- sqrt((pred_df$pred_surv_time - pred_df$obs_surv_time)^2)
+
+# View the populated dataframe
+pred_df
+
+```
+```{r}
+library(ggplot2)
+
+ggplot(data = pred_df, aes(x = obs_surv_time, y = pred_surv_time)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+  labs(x = "Observed Survival time", y = "Predicted Values") +
+  ggtitle("Actual vs. Predicted Values")
+
+
+
+```
+
+```{r}
+residuals <- pred_df$obs_surv_time - pred_df$pred_surv_time
+ggplot(data = pred_df, aes(x = pred_df$obs_surv_time, y = residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Actual Values", y = "Residuals") +
+  ggtitle("Residual Plot")
+
+
+```
+
+
+
+**ROC curve**
+
+```{r}
+library(pROC)
+
+# Calculate ROC curve
+roc_obj <- roc(pred_df$deceased, pred_df$pred_surv_time, smooth=TRUE)
+
+# Plot ROC curve
+plot(roc_obj, main = "ROC Curve", col = "blue")
+
+
+# Add AUC to the plot
+text(0.8, 0.2, paste("AUC =", round(auc(roc_obj), 2)), col = "blue")
+```
+
+### Manual Implementation of C-index
+
+
+Here I am implementing the C-statistic but I discovered that this metric is prone to changes in the order of the data (descending or ascending) Additionally, it does not take in consideration the time. 
+
+```{r}
+
+c_index <- function(survival_probabilities, status) {
+  n <- length(survival_probabilities)
+  concordant <- 0
+  discordant <- 0
+  tied_pairs <- 0
+
+  for (i in 1:(n - 1)) {
+    concordant <- concordant + sum((status[i] == 1) & (status[(i+1):n] == 1) & (survival_probabilities[i] < survival_probabilities[(i+1):n]))
+    discordant <- discordant + sum((status[i] == 1) & (status[(i+1):n] == 1) & (survival_probabilities[i] > survival_probabilities[(i+1):n]))
+    tied_pairs <- tied_pairs + sum((status[i] == 1) & (status[(i+1):n] == 1) & (survival_probabilities[i] == survival_probabilities[(i+1):n]))
+  }
+
+  total_pairs <- n * (n - 1) / 2
+
+  c_stat <- (concordant + 0.5 * tied_pairs) / (concordant + discordant + tied_pairs)
+  return(list(c_stat = c_stat, concordant = concordant, discordant = discordant, tied = tied_pairs))
+}
+
+
+
+dynamic_cindex <- c()
+
+for (i in seq(1,19,1)){
+  c_statistic <- c_index(sl_lasso$event.SL.predict[,i], test_df$Vital_status)
+  dynamic_cindex[i] <- c_statistic$c_stat 
+}
+
+c_index(pred_df$pred_surv_time, pred_df$deceased)
+
+```
+
+### Time-dependent AUC
+
+```{r}
+
+library(survivalROC)
+
+time_dependent_auc <- function(survival_probabilities, status, survival_times, time_points) {
+  n <- length(survival_probabilities)
+  auc_values <- numeric(length(time_points))
+
+  for (t in seq_along(time_points)) {
+   
+     # Identify observations within the specified time window
+    within_time_window <- survival_times <= time_points[t]
+
+    # Calculate time-dependent AUC using timeROC
+    auc_values[t] <- survivalROC(response = status[within_time_window],
+                                          predictor = survival_probabilities[within_time_window],
+                                          time = survival_times[within_time_window],
+                                          tmax = time_points[t])$AUC
+  }
+
+  return(data.frame(Time = time_points, AUC = auc_values))
+}
+
+
+
+```
+```{r}
+
+result <- survivalROC(Stime=pred_df$obs_surv_time,
+                      status = pred_df$deceased,
+                     marker = pred_df$pred_surv_time,
+                     predict.time=15, span = 0.25*NROW(test_set)^(-.20))
+  plot(result$FP, result$TP, type='l', xlim=c(0,1), ylim=c(0,1),col='red',
+  xlab=paste( "FP", "\n", "AUC = ",round(result$AUC,3)), 
+  ylab="TP",main="Super Learner, Method = NNE \n  Timepoint = 15 months")
+  abline(0,1)
+
+
+
+```
+
+```{r}
+
+library(tidyr)
+library(purrr)
+
+# Defining the survivalROC_helper function
+survivalROC_helper <- function(t) {
+  survivalROC(
+    Stime = pred_df$obs_surv_time,
+    status = pred_df$deceased,
+    marker = pred_df$pred_surv_time,
+    predict.time = t,
+    span = 0.25 * nrow(test_set)^(-0.20)
+  )
+}
+
+# Create the data frame with time points
+survivalROC_data <- data.frame(t = 3 * c(1, 2, 3, 4, 5, 6)) %>%
+  mutate(
+    survivalROC = map(t, survivalROC_helper),
+    auc = map_dbl(survivalROC, ~ .[['AUC']]),
+    df_survivalROC = map(survivalROC, ~ select(as_data_frame(.), cut.values, TP, FP))
+  ) %>%
+  unnest(df_survivalROC) %>%
+  arrange(t, FP, TP)
+
+# Plot with timepoints every 3 months
+survivalROC_data %>%
+    ggplot(mapping = aes(x = FP, y = TP)) +
+    geom_point() +
+    geom_line() +
+    geom_label(data = survivalROC_data %>% dplyr::select(t,auc) %>% unique,
+               mapping = aes(label = sprintf("%.3f", auc)), x = 0.5, y = 0.5) +
+    facet_wrap( ~ t) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5),
+          legend.key = element_blank(),
+          plot.title = element_text(hjust = 0.5),
+          strip.background = element_blank())
+```
