@@ -1,11 +1,11 @@
-#system("cmd.exe", input = paste('"K:\\Software\\R-4.1.2\\bin\\Rscript.exe" K:\\Documents\\TCGA\\Scripts\\02-2022-10_Normalizing.R'))
+
 
 library(stringr)
 
-covs <-  read.csv("K:/Documents/TCGA/TCGA.Glioma.metadata.tsv", header = TRUE, sep = "\t")
+covs <-  read.csv("K:/.tsv", header = TRUE, sep = "\t")
 covs_backup <-  covs
 
-normal_df <- readRDS("K:/Documents/TCGA/Data/normalized_re.rds")
+normal_df <- readRDS("K:.rds")
 
 #Getting the ids in the same format
 covs$id_2 <- str_sub(covs$case_submitter_id,6,nchar(covs$case_submitter_id))
@@ -47,4 +47,4 @@ rm(covs)
 rm(surv_variables)
 rm(covs_backup)
 
-saveRDS(merged_df, 'K:/Documents/TCGA/Data/normal_data.rds')
+saveRDS(merged_df, 'K:.rds')
