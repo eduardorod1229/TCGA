@@ -1,8 +1,8 @@
 # Formating of housekeeping genes
 
-hk_sub_trnsc <-  read.csv("K:/Documents/TCGA/Data/featureCounts.ncbiRefSeq.subset.transcript.csv", header =  TRUE, skip = 1, sep = '\t')
-hk_exomes <- read.csv("K:/Documents/TCGA/Data/featureCounts.ncbiRefSeq.subset.exon.csv", header =  TRUE, skip = 1, sep = '\t')
-hk_transcripts <- read.csv("K:/Documents/TCGA/Data/featureCounts.ncbiRefSeq.transcript.csv", header =  TRUE, skip = 1, sep = '\t')
+hk_sub_trnsc <-  read.csv("K.csv", header =  TRUE, skip = 1, sep = '\t')
+hk_exomes <- read.csv("K:.csv", header =  TRUE, skip = 1, sep = '\t')
+hk_transcripts <- read.csv("K:csv", header =  TRUE, skip = 1, sep = '\t')
 
 #The code below is to change the names of the transcripts (no-subset) file
 column_names <- function(data_frame){
@@ -37,9 +37,9 @@ colnames(hk_exomes) <- rename_count_columns(hk_exomes)
 colnames(hk_sub_trnsc) <- rename_count_columns(hk_sub_trnsc)
 
 
-saveRDS(hk_exomes, 'K:/Documents/TCGA/Data/hk_genes_exomes.rds')
-saveRDS(hk_sub_trnsc, 'K:/Documents/TCGA/Data/hk_genes_subtranscripts.rds')
-saveRDS(hk_exomes, 'K:/Documents/TCGA/Data/hk_genes_transcripts.rds')
+saveRDS(hk_exomes, 'K.rds')
+saveRDS(hk_sub_trnsc, 'K:.rds')
+saveRDS(hk_exomes, 'K:.rds')
 
 
 transpose_df <- function(data_frame){
@@ -58,11 +58,11 @@ hk_sub_trnsc_t <- transpose_df(hk_sub_trnsc)
 hk_exomes_t <- transpose_df(hk_exomes)
 
 hk_transcripts_count <- hk_transcripts_t[-c(1:6),c('Geneid','ALB','ACTB','B2M')]
-saveRDS(hk_transcripts_count, 'K:/Documents/TCGA/Data/hk_trns_count.rds')
+saveRDS(hk_transcripts_count, 'K.rds')
 
 hk_subt_count <- hk_sub_trnsc_t[-c(1:6),c('Geneid','ALB','ACTB','B2M')]
-saveRDS(hk_subt_count, 'K:/Documents/TCGA/Data/hk_subtranscripts_count.rds')
+saveRDS(hk_subt_count, 'K:.rds')
 
 hk_exomes_count <- hk_exomes_t[-c(1:6),c('Geneid','ALB','ACTB','B2M')]
-saveRDS(hk_exomes_count, 'K:/Documents/TCGA/Data/hk_exomes_count.rds')
+saveRDS(hk_exomes_count, 'K:.rds')
 
