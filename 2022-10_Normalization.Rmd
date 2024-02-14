@@ -17,12 +17,12 @@ library(data.table)
 ### Load the data
 
 ```{r}
-setwd("K:/Documents/TCGA")
+setwd("K:")
 # Read in Covariates
-covs <-  read.csv("K:/Documents/TCGA/TCGA.Glioma.metadata.tsv", header = TRUE, sep = "\t")
+covs <-  read.csv("", header = TRUE, sep = "\t")
 
 # Read in the transposome dataset 
-transp <-  read.csv("K:/Documents/TCGA/count_matrix2.csv.gz" , header = TRUE)
+transp <-  read.csv("" , header = TRUE)
 
 
 ```
@@ -56,7 +56,7 @@ head(transp)
 ```
 ### Importing housekeeping genes
 ```{r}
-hk_genes <-  read.csv("K:/Documents/TCGA/Data/featureCounts.ncbiRefSeq.transcript.csv", header <-  TRUE, skip = 1, sep = '\t')
+hk_genes <-  read.csv("", header <-  TRUE, skip = 1, sep = '\t')
 
 
 
@@ -78,7 +78,7 @@ colnames(hk_genes) <- column_names(hk_genes)
 
 
 hk_genes %>%
-        saveRDS('K:/Documents/TCGA/Data/house_keeping_genes.rds')
+        saveRDS('.rds')
 
 
 #hk_genes <- t(hk_genes)
